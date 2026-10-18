@@ -1,0 +1,10 @@
+.build*/
+.cache/
+dev/
+dist/release/
+dist/*.app/
+.DS_Store
+*.dSYM
+
+# Separate local project, not part of FocusCull
+QuJing/
