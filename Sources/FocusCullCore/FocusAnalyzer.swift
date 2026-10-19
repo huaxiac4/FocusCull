@@ -7,6 +7,8 @@ public struct FocusAnalyzerOptions: Sendable {
     public var blockSize: Int
     public var blockStride: Int
     public var topFraction: Double
+    public var directionalWeight: Double
+    public var edgeTrim: Double
     public var useMetal: Bool
 
     public init(
@@ -14,12 +16,16 @@ public struct FocusAnalyzerOptions: Sendable {
         blockSize: Int = 32,
         blockStride: Int = 24,
         topFraction: Double = 0.02,
+        directionalWeight: Double = 0.45,
+        edgeTrim: Double = 0,
         useMetal: Bool = true
     ) {
         self.analysisMaxPixel = analysisMaxPixel
         self.blockSize = blockSize
         self.blockStride = blockStride
         self.topFraction = topFraction
+        self.directionalWeight = directionalWeight
+        self.edgeTrim = edgeTrim
         self.useMetal = useMetal
     }
 
@@ -118,7 +124,8 @@ public enum FocusAnalyzer {
                 backend: metrics.backend,
                 focusRect: metrics.focusRect,
                 analyzedWidth: metrics.width,
-                analyzedHeight: metrics.height
+                analyzedHeight: metrics.height,
+                focusBlocks: metrics.blocks
             )
         } catch {
             return failure(
@@ -176,6 +183,7 @@ public enum FocusAnalyzer {
         let focusRect: FocusRect?
         let width: Int
         let height: Int
+        let blocks: [FocusBlockSample]
     }
 
     private static func score(image: CGImage, options: FocusAnalyzerOptions) throws -> Metrics {
@@ -232,8 +240,22 @@ public enum FocusAnalyzer {
                height: height,
                blockSize: blockSize,
                blockStride: blockStride,
-               topFraction: options.topFraction
+               topFraction: options.topFraction,
+               directionalWeight: options.directionalWeight,
+               edgeTrim: options.edgeTrim
            ) {
+            let blocks = result.blocks.map { block in
+                FocusBlockSample(
+                    rect: FocusRect(
+                        x: Double(block.x) / Double(width),
+                        y: Double(block.y) / Double(height),
+                        width: Double(block.width) / Double(width),
+                        height: Double(block.height) / Double(height)
+                    ),
+                    energy: block.combined,
+                    directional: block.directional
+                )
+            }
             return Metrics(
                 score: result.score,
                 isotropicScore: result.isotropicScore,
@@ -241,7 +263,8 @@ public enum FocusAnalyzer {
                 backend: .metal,
                 focusRect: result.focusRect,
                 width: width,
-                height: height
+                height: height,
+                blocks: blocks
             )
         }
 
@@ -337,12 +360,34 @@ public enum FocusAnalyzer {
             throw FocusAnalyzerError.imageTooSmall
         }
 
-        let scores = FocusBlockScoring.scores(blocks: blocks, topFraction: options.topFraction)
+        let usable = FocusBlockScoring.usableBlocks(
+            blocks,
+            imageWidth: width,
+            imageHeight: height,
+            edgeTrim: options.edgeTrim
+        )
+        let scores = FocusBlockScoring.scores(
+            blocks: usable,
+            topFraction: options.topFraction,
+            directionalWeight: options.directionalWeight
+        )
         let focusRect = FocusBlockScoring.focusRect(
-            blocks: blocks,
+            blocks: usable,
             imageWidth: width,
             imageHeight: height
         )
+        let samples = usable.map { block in
+            FocusBlockSample(
+                rect: FocusRect(
+                    x: Double(block.x) / Double(width),
+                    y: Double(block.y) / Double(height),
+                    width: Double(block.width) / Double(width),
+                    height: Double(block.height) / Double(height)
+                ),
+                energy: block.combined,
+                directional: block.directional
+            )
+        }
 
         return Metrics(
             score: scores.combined,
@@ -351,7 +396,58 @@ public enum FocusAnalyzer {
             backend: .cpu,
             focusRect: focusRect,
             width: width,
-            height: height
+            height: height,
+            blocks: samples
+        )
+    }
+
+    /// Turns a large attention box into a compact box around its sharpest
+    /// blocks. This keeps the "合焦" marker useful for small distant subjects.
+    public static func refinedFocusRect(
+        blocks: [FocusBlockSample],
+        within region: FocusRect
+    ) -> FocusRect? {
+        let minX = region.x
+        let maxX = region.x + region.width
+        let minY = region.y
+        let maxY = region.y + region.height
+        let selected = blocks.filter { block in
+            let cx = block.rect.x + block.rect.width / 2
+            let cy = block.rect.y + block.rect.height / 2
+            return cx >= minX && cx <= maxX && cy >= minY && cy <= maxY
+        }
+        guard selected.count >= 3 else { return nil }
+        let topCount = max(6, Int((Double(selected.count) * 0.10).rounded()))
+        let top = selected.sorted { $0.energy > $1.energy }.prefix(topCount)
+        var x1 = 1.0, y1 = 1.0, x2 = 0.0, y2 = 0.0
+        for block in top {
+            x1 = min(x1, block.rect.x)
+            y1 = min(y1, block.rect.y)
+            x2 = max(x2, block.rect.x + block.rect.width)
+            y2 = max(y2, block.rect.y + block.rect.height)
+        }
+        guard x2 > x1, y2 > y1 else { return nil }
+        let padX = (x2 - x1) * 0.12 + 0.01
+        let padY = (y2 - y1) * 0.12 + 0.01
+        x1 = max(0, x1 - padX)
+        y1 = max(0, y1 - padY)
+        x2 = min(1, x2 + padX)
+        y2 = min(1, y2 + padY)
+        return FocusRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
+    }
+
+    /// Re-scores only the AI subject/face region from the saved local blocks.
+    public static func regionScore(
+        blocks: [FocusBlockSample],
+        rect: FocusRect,
+        topFraction: Double,
+        directionalWeight: Double
+    ) -> (isotropic: Double, directional: Double, combined: Double, count: Int)? {
+        FocusBlockScoring.regionScores(
+            samples: blocks,
+            rect: rect,
+            topFraction: topFraction,
+            directionalWeight: directionalWeight
         )
     }
 

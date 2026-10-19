@@ -26,6 +26,38 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+enum CullingSensitivity: String, CaseIterable, Identifiable {
+    case relaxed
+    case balanced
+    case strict
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .relaxed: return "宽松"
+        case .balanced: return "标准"
+        case .strict: return "严格"
+        }
+    }
+
+    var bias: Double {
+        switch self {
+        case .relaxed: return -8
+        case .balanced: return 0
+        case .strict: return 8
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .relaxed: return "保留更多照片，适合先粗筛再人工确认"
+        case .balanced: return "自动阈值，适合大多数连拍"
+        case .strict: return "更早把边界照片放进疑似失焦"
+        }
+    }
+}
+
 enum AnalysisQuality: String, CaseIterable, Identifiable {
     case fast
     case standard
@@ -65,6 +97,17 @@ final class AppSettings: ObservableObject {
         static let showEXIF = "FocusCull.settings.showEXIF"
         static let appearance = "FocusCull.settings.appearance"
         static let theme = "FocusCull.settings.theme"
+        static let sensitivity = "FocusCull.settings.sensitivity"
+        static let subjectFocusWeight = "FocusCull.settings.subjectFocusWeight"
+        static let directionalWeight = "FocusCull.settings.directionalWeight"
+        static let peakFraction = "FocusCull.settings.peakFraction"
+        static let edgeTrim = "FocusCull.settings.edgeTrim"
+        static let analysisConcurrency = "FocusCull.settings.analysisConcurrency"
+        static let maxBlurFraction = "FocusCull.settings.maxBlurFraction"
+        static let showScore = "FocusCull.settings.showScore"
+        static let showSubject = "FocusCull.settings.showSubject"
+        static let showFileDetails = "FocusCull.settings.showFileDetails"
+        static let restoreLastFolder = "FocusCull.settings.restoreLastFolder"
     }
 
     private let defaults: UserDefaults
@@ -108,6 +151,39 @@ final class AppSettings: ObservableObject {
             Theme.currentTheme = theme
         }
     }
+    @Published var sensitivity: CullingSensitivity {
+        didSet { defaults.set(sensitivity.rawValue, forKey: Key.sensitivity) }
+    }
+    @Published var subjectFocusWeight: Double {
+        didSet { defaults.set(subjectFocusWeight, forKey: Key.subjectFocusWeight) }
+    }
+    @Published var directionalWeight: Double {
+        didSet { defaults.set(directionalWeight, forKey: Key.directionalWeight) }
+    }
+    @Published var peakFraction: Double {
+        didSet { defaults.set(peakFraction, forKey: Key.peakFraction) }
+    }
+    @Published var edgeTrim: Double {
+        didSet { defaults.set(edgeTrim, forKey: Key.edgeTrim) }
+    }
+    @Published var analysisConcurrency: Int {
+        didSet { defaults.set(analysisConcurrency, forKey: Key.analysisConcurrency) }
+    }
+    @Published var maxBlurFraction: Double {
+        didSet { defaults.set(maxBlurFraction, forKey: Key.maxBlurFraction) }
+    }
+    @Published var showScore: Bool {
+        didSet { defaults.set(showScore, forKey: Key.showScore) }
+    }
+    @Published var showSubject: Bool {
+        didSet { defaults.set(showSubject, forKey: Key.showSubject) }
+    }
+    @Published var showFileDetails: Bool {
+        didSet { defaults.set(showFileDetails, forKey: Key.showFileDetails) }
+    }
+    @Published var restoreLastFolder: Bool {
+        didSet { defaults.set(restoreLastFolder, forKey: Key.restoreLastFolder) }
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -137,6 +213,39 @@ final class AppSettings: ObservableObject {
         self.theme = AppTheme(
             rawValue: defaults.string(forKey: Key.theme) ?? ""
         ) ?? .focusCull
+        self.sensitivity = CullingSensitivity(
+            rawValue: defaults.string(forKey: Key.sensitivity) ?? ""
+        ) ?? .balanced
+        self.subjectFocusWeight = Self.clamp(
+            Self.double(defaults, Key.subjectFocusWeight, fallback: 0.65),
+            min: 0,
+            max: 1
+        )
+        self.directionalWeight = Self.clamp(
+            Self.double(defaults, Key.directionalWeight, fallback: 0.45),
+            min: 0,
+            max: 1
+        )
+        self.peakFraction = Self.clamp(
+            Self.double(defaults, Key.peakFraction, fallback: 0.02),
+            min: 0.01,
+            max: 0.08
+        )
+        self.edgeTrim = Self.clamp(
+            Self.double(defaults, Key.edgeTrim, fallback: 0),
+            min: 0,
+            max: 0.15
+        )
+        self.analysisConcurrency = min(8, max(2, defaults.object(forKey: Key.analysisConcurrency) as? Int ?? 6))
+        self.maxBlurFraction = Self.clamp(
+            Self.double(defaults, Key.maxBlurFraction, fallback: 0.45),
+            min: 0.1,
+            max: 0.7
+        )
+        self.showScore = Self.bool(defaults, Key.showScore, fallback: true)
+        self.showSubject = Self.bool(defaults, Key.showSubject, fallback: true)
+        self.showFileDetails = Self.bool(defaults, Key.showFileDetails, fallback: true)
+        self.restoreLastFolder = Self.bool(defaults, Key.restoreLastFolder, fallback: false)
         Theme.currentTheme = self.theme
     }
 
@@ -153,6 +262,30 @@ final class AppSettings: ObservableObject {
         showEXIF = true
         appearance = .system
         theme = .focusCull
+        sensitivity = .balanced
+        subjectFocusWeight = 0.65
+        directionalWeight = 0.45
+        peakFraction = 0.02
+        edgeTrim = 0
+        analysisConcurrency = 6
+        maxBlurFraction = 0.45
+        showScore = true
+        showSubject = true
+        showFileDetails = true
+        restoreLastFolder = false
+    }
+
+    func resetAnalysisOptions() {
+        useMetal = true
+        enableSubjectAI = true
+        analysisQuality = .standard
+        sensitivity = .balanced
+        subjectFocusWeight = 0.65
+        directionalWeight = 0.45
+        peakFraction = 0.02
+        edgeTrim = 0
+        analysisConcurrency = 6
+        maxBlurFraction = 0.45
     }
 
     var hoverMagnificationText: String {

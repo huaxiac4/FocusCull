@@ -21,7 +21,7 @@ FocusCull/
 ├── scripts/build_app.sh     构建脚本
 ├── docs/screenshots/        截图
 ├── docs/GITHUB_RELEASE_NOTES.md
-├── dist/FocusCull-1.4.1-macOS.zip
+├── dist/FocusCull-1.5.0-macOS.zip
 ├── README.md
 ├── 使用说明.md
 ├── CHANGELOG.md
@@ -109,14 +109,14 @@ git status
 
 **重点检查 `git status`：**
 
-- 应该看到 `README.md`、`Sources/`、`docs/`、`dist/FocusCull-1.4.1-macOS.zip` 等。
+- 应该看到 `README.md`、`Sources/`、`docs/`、`dist/FocusCull-1.5.0-macOS.zip` 等。
 - **不应该**看到 `.build-app/`、`.cache/`、`dev/`、`dist/release/`、`dist/FocusCull.app/`。
 - `.DS_Store` 也不应该出现。
 
 确认无误后提交：
 
 ```bash
-git commit -m "FocusCull 1.4.1: Metal + Neural Engine photo culling"
+git commit -m "FocusCull 1.5.0: Metal + Neural Engine photo culling"
 ```
 
 ---
@@ -186,16 +186,16 @@ git push -u origin main
 ### 网页方式
 
 1. 打开仓库 → 右侧 **Releases** → **Draft a new release**。
-2. **Choose a tag**：输入 `v1.4.1` → **Create new tag on publish**。
+2. **Choose a tag**：输入 `v1.5.0` → **Create new tag on publish**。
 3. **Target**：`main`。
 4. **Release title**：
    ```text
-   FocusCull 1.4.1 — HIF 10-bit 支持 + 实拍回归
+   FocusCull 1.5.0 — 更准的主体焦点 + 更完整的设置
    ```
 5. **Describe this release**：把 `docs/GITHUB_RELEASE_NOTES.md` 的内容整段粘贴进去。
 6. **Attach binaries**：上传：
    ```text
-   dist/FocusCull-1.4.1-macOS.zip
+   dist/FocusCull-1.5.0-macOS.zip
    ```
 7. 点 **Publish release**。
 
@@ -204,8 +204,8 @@ git push -u origin main
 ```bash
 cd /path/to/FocusCull
 
-gh release create v1.4.1 dist/FocusCull-1.4.1-macOS.zip \
-  --title "FocusCull 1.4.1 — HIF 10-bit 支持 + 实拍回归" \
+gh release create v1.5.0 dist/FocusCull-1.5.0-macOS.zip \
+  --title "FocusCull 1.5.0 — 更准的主体焦点 + 更完整的设置" \
   --notes-file docs/GITHUB_RELEASE_NOTES.md
 ```
 
@@ -241,7 +241,7 @@ photo-culling focus-detection photography burst-photos privacy
 当前 README 的下载按钮指向：
 
 ```text
-dist/FocusCull-1.4.1-macOS.zip
+dist/FocusCull-1.5.0-macOS.zip
 ```
 
 因为 ZIP 已经提交到仓库，这个链接在 GitHub 上可直接下载。
@@ -260,7 +260,7 @@ dist/FocusCull-1.4.1-macOS.zip
 
 - [ ] 仓库首页能看到 README、截图、AI 主体筛选和 Metal/Neural Engine 介绍。
 - [ ] `git status` 干净，没有 `.build`、`dev`、`.DS_Store`。
-- [ ] Release `v1.4.1` 已发布，ZIP 可下载。
+- [ ] Release `v1.5.0` 已发布，ZIP 可下载。
 - [ ] 下载 ZIP，解压后 `FocusCull.app` 能打开。
 - [ ] 仓库 About 的 Description、Topics、Social preview 已设置。
 - [ ] README 没有 `你的用户名` 之类的占位符（如果加了 Release 链接）。
@@ -298,7 +298,7 @@ git remote set-url origin https://github.com/你的用户名/FocusCull.git
 
 ```bash
 git add .
-git commit -m "FocusCull 1.4.1"
+git commit -m "FocusCull 1.5.0"
 git push -u origin main
 ```
 

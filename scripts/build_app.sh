@@ -53,13 +53,13 @@ find "$APP_STAGE" -name '.DS_Store' -delete 2>/dev/null || true
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_STAGE"
 
 mkdir -p dist
-rm -f "dist/FocusCull-1.4.1-macOS.zip"
+rm -f "dist/FocusCull-1.5.0-macOS.zip"
 COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --noextattr --keepParent \
-  "$APP_STAGE" "dist/FocusCull-1.4.1-macOS.zip"
+  "$APP_STAGE" "dist/FocusCull-1.5.0-macOS.zip"
 
 # Verify the archive independently, since that is the shipped artifact.
 VERIFY="$(mktemp -d "${TMPDIR:-/tmp}/FocusCull-verify.XXXXXX")"
-/usr/bin/ditto -x -k "dist/FocusCull-1.4.1-macOS.zip" "$VERIFY"
+/usr/bin/ditto -x -k "dist/FocusCull-1.5.0-macOS.zip" "$VERIFY"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$VERIFY/FocusCull.app"
 lipo -info "$VERIFY/FocusCull.app/Contents/MacOS/FocusCull"
 
@@ -70,4 +70,4 @@ mkdir -p dist/release
 /usr/bin/ditto --norsrc --noextattr "$APP_STAGE" "dist/release/FocusCull.app"
 
 echo "Built: $ROOT/dist/release/FocusCull.app"
-echo "Zip:   $ROOT/dist/FocusCull-1.4.1-macOS.zip"
+echo "Zip:   $ROOT/dist/FocusCull-1.5.0-macOS.zip"

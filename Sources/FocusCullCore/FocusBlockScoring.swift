@@ -12,7 +12,8 @@ struct FocusBlock: Sendable {
 enum FocusBlockScoring {
     static func scores(
         blocks: [FocusBlock],
-        topFraction: Double
+        topFraction: Double,
+        directionalWeight: Double = 0.45
     ) -> (isotropic: Double, directional: Double, combined: Double) {
         guard !blocks.isEmpty else { return (0, 0, 0) }
         let topCount = min(
@@ -25,10 +26,63 @@ enum FocusBlockScoring {
         directional.sort(by: >)
         let isotropicPeak = combined.prefix(topCount).reduce(0, +) / Double(topCount)
         let directionalPeak = directional.prefix(topCount).reduce(0, +) / Double(topCount)
+        let weight = min(1, max(0, directionalWeight))
         return (
             isotropicPeak,
             directionalPeak,
-            isotropicPeak * 0.55 + directionalPeak * 0.45
+            isotropicPeak * (1 - weight) + directionalPeak * weight
+        )
+    }
+
+    static func usableBlocks(
+        _ blocks: [FocusBlock],
+        imageWidth: Int,
+        imageHeight: Int,
+        edgeTrim: Double
+    ) -> [FocusBlock] {
+        let trim = min(0.25, max(0, edgeTrim))
+        guard trim > 0, imageWidth > 0, imageHeight > 0 else { return blocks }
+        let minX = Double(imageWidth) * trim
+        let maxX = Double(imageWidth) * (1 - trim)
+        let minY = Double(imageHeight) * trim
+        let maxY = Double(imageHeight) * (1 - trim)
+        let filtered = blocks.filter { block in
+            let cx = Double(block.x) + Double(block.width) / 2
+            let cy = Double(block.y) + Double(block.height) / 2
+            return cx >= minX && cx <= maxX && cy >= minY && cy <= maxY
+        }
+        return filtered.isEmpty ? blocks : filtered
+    }
+
+    static func regionScores(
+        samples: [FocusBlockSample],
+        rect: FocusRect,
+        topFraction: Double,
+        directionalWeight: Double,
+        padding: Double = 0.02
+    ) -> (isotropic: Double, directional: Double, combined: Double, count: Int)? {
+        guard !samples.isEmpty else { return nil }
+        let padX = rect.width * padding
+        let padY = rect.height * padding
+        let minX = rect.x - padX
+        let maxX = rect.x + rect.width + padX
+        let minY = rect.y - padY
+        let maxY = rect.y + rect.height + padY
+        let selected = samples.filter { sample in
+            let cx = sample.rect.x + sample.rect.width / 2
+            let cy = sample.rect.y + sample.rect.height / 2
+            return cx >= minX && cx <= maxX && cy >= minY && cy <= maxY
+        }
+        guard selected.count >= 3 else { return nil }
+        let topCount = max(3, Int((Double(selected.count) * max(0.02, topFraction)).rounded()))
+        let isotropic = selected.map(\.energy).sorted(by: >).prefix(topCount).reduce(0, +) / Double(topCount)
+        let directional = selected.map(\.directional).sorted(by: >).prefix(topCount).reduce(0, +) / Double(topCount)
+        let weight = min(1, max(0, directionalWeight))
+        return (
+            isotropic,
+            directional,
+            isotropic * (1 - weight) + directional * weight,
+            selected.count
         )
     }
 

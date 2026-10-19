@@ -188,6 +188,7 @@ final class AppModel: ObservableObject {
     @Published var sortOrder: PhotoSortOrder = .fileName
     @Published private(set) var threshold: Double = 50
     @Published private(set) var autoThreshold: Double = 50
+    private var autoThresholdBase: Double = 50
     @Published private(set) var isAutoThreshold = true
     @Published private(set) var allSoftWarning = false
     @Published var includeSubfolders = false
@@ -333,7 +334,7 @@ final class AppModel: ObservableObject {
 
     var thresholdText: String { String(Int(threshold.rounded())) }
 
-    var autoThresholdText: String { String(Int(autoThreshold.rounded())) }
+    var autoThresholdText: String { String(Int(adjustedThreshold(autoThreshold).rounded())) }
 
     var currentFolderDisplayPath: String {
         guard let folderURL else { return "" }
@@ -627,11 +628,16 @@ final class AppModel: ObservableObject {
             $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending
         }
         let batch = SharpnessScoring.makeBatch(rawScores: ordered.map(\.rawScore))
-        let targetThreshold = isAutoThreshold ? batch.autoThreshold : threshold
         if isAutoThreshold {
-            autoThreshold = batch.autoThreshold
-            threshold = targetThreshold
+            autoThresholdBase = batch.autoThreshold
+            autoThreshold = SharpnessScoring.cappedAutoThreshold(
+                base: batch.autoThreshold,
+                scores: batch.scores,
+                maxBlurFraction: settings.maxBlurFraction
+            )
+            threshold = adjustedThreshold(autoThreshold)
         }
+        let targetThreshold = threshold
         allSoftWarning = batch.allSoftWarning
         metalAnalyzedCount = ordered.lazy.filter { $0.backend == .metal }.count
         cpuAnalyzedCount = ordered.lazy.filter { $0.backend == .cpu }.count
@@ -737,27 +743,67 @@ final class AppModel: ObservableObject {
 
         let options = FocusAnalyzerOptions(
             analysisMaxPixel: settings.analysisQuality.maxPixel,
+            topFraction: settings.peakFraction,
+            directionalWeight: settings.directionalWeight,
+            edgeTrim: settings.edgeTrim,
             useMetal: settings.useMetal
         )
         let classifySubjects = settings.enableSubjectAI
-        let concurrency = min(6, max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
+        let subjectWeight = settings.subjectFocusWeight
+        let topFraction = settings.peakFraction
+        let directionalWeight = settings.directionalWeight
+        let concurrency = min(
+            settings.analysisConcurrency,
+            max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
+        )
+
+        let analyzeOne: @Sendable (URL) -> PhotoAnalysis = { url in
+            var analysis = FocusAnalyzer.analyze(url: url, options: options)
+            if classifySubjects, !analysis.hasError {
+                let subject = SubjectClassifier.analyze(
+                    url: url,
+                    existingFocusRect: analysis.focusRect
+                )
+                analysis.subject = subject?.prediction
+
+                if let subjectRect = subject?.focusRect {
+                    // Attention boxes can cover a large sky area. Tighten them
+                    // around the sharpest local blocks before scoring/display.
+                    var focusRect = subjectRect
+                    if subjectRect.width * subjectRect.height > 0.30,
+                       let refined = FocusAnalyzer.refinedFocusRect(
+                           blocks: analysis.focusBlocks,
+                           within: subjectRect
+                       ) {
+                        focusRect = refined
+                    }
+                    analysis.focusRect = focusRect
+
+                    // The global score can be dominated by a sharp background.
+                    // Re-score the AI subject/face region and blend it in.
+                    if subjectWeight > 0,
+                       let region = FocusAnalyzer.regionScore(
+                           blocks: analysis.focusBlocks,
+                           rect: focusRect,
+                           topFraction: topFraction,
+                           directionalWeight: directionalWeight
+                       ) {
+                        let weight = min(1, max(0, subjectWeight))
+                        analysis.rawScore = analysis.rawScore * (1 - weight) + region.combined * weight
+                        analysis.isotropicScore = analysis.isotropicScore * (1 - weight) + region.isotropic * weight
+                        analysis.directionalScore = analysis.directionalScore * (1 - weight) + region.directional * weight
+                    }
+                }
+            }
+            return analysis
+        }
+
         await withTaskGroup(of: PhotoAnalysis.self) { group in
             var iterator = urls.makeIterator()
             for _ in 0..<min(concurrency, urls.count) {
                 guard let url = iterator.next() else { break }
                 group.addTask(priority: .userInitiated) {
-                    var analysis = FocusAnalyzer.analyze(url: url, options: options)
-                    if classifySubjects, !analysis.hasError {
-                        let subject = SubjectClassifier.analyze(
-                            url: url,
-                            existingFocusRect: analysis.focusRect
-                        )
-                        analysis.subject = subject?.prediction
-                        if let focusRect = subject?.focusRect {
-                            analysis.focusRect = focusRect
-                        }
-                    }
-                    return analysis
+                    analyzeOne(url)
                 }
             }
 
@@ -772,18 +818,7 @@ final class AppModel: ObservableObject {
                 progress(done, urls.count)
                 if let url = iterator.next() {
                     group.addTask(priority: .userInitiated) {
-                        var analysis = FocusAnalyzer.analyze(url: url, options: options)
-                        if classifySubjects, !analysis.hasError {
-                            let subject = SubjectClassifier.analyze(
-                                url: url,
-                                existingFocusRect: analysis.focusRect
-                            )
-                            analysis.subject = subject?.prediction
-                            if let focusRect = subject?.focusRect {
-                                analysis.focusRect = focusRect
-                            }
-                        }
-                        return analysis
+                        analyzeOne(url)
                     }
                 }
             }
@@ -797,8 +832,13 @@ final class AppModel: ObservableObject {
         }
         let batch = SharpnessScoring.makeBatch(rawScores: ordered.map(\.rawScore))
 
-        autoThreshold = batch.autoThreshold
-        threshold = batch.autoThreshold
+        autoThresholdBase = batch.autoThreshold
+        autoThreshold = SharpnessScoring.cappedAutoThreshold(
+            base: batch.autoThreshold,
+            scores: batch.scores,
+            maxBlurFraction: settings.maxBlurFraction
+        )
+        threshold = adjustedThreshold(autoThreshold)
         isAutoThreshold = true
         allSoftWarning = batch.allSoftWarning
 
@@ -809,7 +849,7 @@ final class AppModel: ObservableObject {
             PhotoItem(
                 analysis: analysis,
                 score: score,
-                isSharp: !analysis.hasError && score >= batch.autoThreshold
+                isSharp: !analysis.hasError && score >= threshold
             )
         }
         if settings.autoSelectBlurry {
@@ -842,7 +882,29 @@ final class AppModel: ObservableObject {
 
     func resetToAutoThreshold() {
         isAutoThreshold = true
-        applyThreshold(autoThreshold)
+        applyThreshold(adjustedThreshold(autoThreshold))
+    }
+
+    /// Called when the culling sensitivity changes in Settings. Manual
+    /// threshold tweaks are left untouched.
+    func reapplySensitivity() {
+        guard phase == .ready, isAutoThreshold else { return }
+        applyThreshold(adjustedThreshold(autoThreshold))
+    }
+
+    func reapplyAutoThreshold() {
+        guard phase == .ready, isAutoThreshold, !photos.isEmpty else { return }
+        let scores = photos.map(\.score)
+        autoThreshold = SharpnessScoring.cappedAutoThreshold(
+            base: autoThresholdBase,
+            scores: scores,
+            maxBlurFraction: settings.maxBlurFraction
+        )
+        applyThreshold(adjustedThreshold(autoThreshold))
+    }
+
+    private func adjustedThreshold(_ base: Double) -> Double {
+        min(100, max(0, (base + settings.sensitivity.bias).rounded()))
     }
 
     func markAllAsBlurry() {
@@ -1041,7 +1103,88 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: - Finder / toast / formatting
+    // MARK: - Analysis report / Finder / toast / formatting
+
+    func exportAnalysisReport() {
+        guard !photos.isEmpty else {
+            showToast("请先载入并分析照片", systemImage: "doc.text.magnifyingglass", kind: .info)
+            return
+        }
+
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyyMMdd-HHmm"
+        let panel = NSSavePanel()
+        panel.title = "导出分析报告"
+        panel.message = "包含每张照片的清晰度、主体、合焦框和分析状态。"
+        panel.nameFieldStringValue = "FocusCull-分析报告-\(stamp.string(from: Date())).csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.canCreateDirectories = true
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try analysisReportCSV().write(to: url, options: .atomic)
+            history.log(.export, "导出分析报告", "\(photos.count) 张 · \(url.lastPathComponent)")
+            showToast("分析报告已导出", systemImage: "square.and.arrow.up", kind: .success)
+        } catch {
+            activeAlert = .error(title: "导出失败", message: error.localizedDescription)
+        }
+    }
+
+    private func analysisReportCSV() -> Data {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = .current
+
+        var rows = [[
+            "文件名", "路径", "清晰度", "原始分数", "各向同性", "方向平衡",
+            "状态", "AI 主体", "主体置信度", "合焦框", "像素宽", "像素高",
+            "文件大小", "拍摄时间", "分析引擎", "错误"
+        ]]
+
+        for photo in photos {
+            let a = photo.analysis
+            let status: String
+            if a.hasError {
+                status = "分析失败"
+            } else {
+                status = photo.isSharp ? "合焦" : "疑似失焦"
+            }
+            let rect = a.focusRect.map {
+                String(format: "%.3f,%.3f,%.3f,%.3f", $0.x, $0.y, $0.width, $0.height)
+            } ?? ""
+            rows.append([
+                a.fileName,
+                a.url.path,
+                String(format: "%.1f", photo.score),
+                String(format: "%.3f", a.rawScore),
+                String(format: "%.3f", a.isotropicScore),
+                String(format: "%.3f", a.directionalScore),
+                status,
+                a.subject?.subject.title ?? "",
+                a.subject?.confidenceText ?? "",
+                rect,
+                String(a.pixelWidth),
+                String(a.pixelHeight),
+                String(a.fileSize),
+                a.captureDate.map { dateFormatter.string(from: $0) } ?? "",
+                a.backend.displayName,
+                a.errorMessage ?? ""
+            ])
+        }
+
+        let text = rows.map { row in
+            row.map(csvEscape).joined(separator: ",")
+        }.joined(separator: "\r\n")
+        return Data(("\u{FEFF}" + text).utf8)
+    }
+
+    private func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
 
     func revealFolderInFinder() {
         guard let folderURL else { return }

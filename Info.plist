@@ -24,9 +24,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.4.1</string>
+    <string>1.5.0</string>
     <key>CFBundleVersion</key>
-    <string>6</string>
+    <string>7</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.photography</string>
     <key>LSMinimumSystemVersion</key>
@@ -36,7 +36,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleGetInfoString</key>
-    <string>FocusCull 1.4.1 · 开发者 Lee · 开发工具 DeepSeek · © 2026 Lee</string>
+    <string>FocusCull 1.5.0 · 开发者 Lee · 开发工具 DeepSeek · © 2026 Lee</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Lee. Built with DeepSeek.</string>
     <key>NSDesktopFolderUsageDescription</key>

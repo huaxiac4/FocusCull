@@ -32,6 +32,18 @@ public enum FocusBackend: String, Sendable, Hashable {
 }
 
 /// One photo after the focus-analysis pass.
+public struct FocusBlockSample: Hashable, Sendable {
+    public let rect: FocusRect
+    public let energy: Double
+    public let directional: Double
+
+    public init(rect: FocusRect, energy: Double, directional: Double) {
+        self.rect = rect
+        self.energy = energy
+        self.directional = directional
+    }
+}
+
 public struct PhotoAnalysis: Identifiable, Hashable, Sendable {
     public let url: URL
     public let fileName: String
@@ -40,11 +52,11 @@ public struct PhotoAnalysis: Identifiable, Hashable, Sendable {
     public let pixelWidth: Int
     public let pixelHeight: Int
     /// Raw focus score. Higher is sharper.
-    public let rawScore: Double
+    public var rawScore: Double
     /// Isotropic high-frequency energy before directional balancing.
-    public let isotropicScore: Double
+    public var isotropicScore: Double
     /// Direction-balanced high-frequency energy.
-    public let directionalScore: Double
+    public var directionalScore: Double
     /// Metal GPU, CPU fallback, or failed.
     public let backend: FocusBackend
     /// Normalized region containing the sharpest blocks, when available.
@@ -54,6 +66,8 @@ public struct PhotoAnalysis: Identifiable, Hashable, Sendable {
     /// Image size actually used by the analyzer.
     public let analyzedWidth: Int
     public let analyzedHeight: Int
+    /// Normalized local focus blocks. Kept for subject-region rescoring.
+    public var focusBlocks: [FocusBlockSample]
     /// A short, user-presentable reason when analysis failed.
     public let errorMessage: String?
 
@@ -74,6 +88,7 @@ public struct PhotoAnalysis: Identifiable, Hashable, Sendable {
         subject: SubjectPrediction? = nil,
         analyzedWidth: Int = 0,
         analyzedHeight: Int = 0,
+        focusBlocks: [FocusBlockSample] = [],
         errorMessage: String? = nil
     ) {
         self.url = url
@@ -90,6 +105,7 @@ public struct PhotoAnalysis: Identifiable, Hashable, Sendable {
         self.subject = subject
         self.analyzedWidth = analyzedWidth
         self.analyzedHeight = analyzedHeight
+        self.focusBlocks = focusBlocks
         self.errorMessage = errorMessage
     }
 
@@ -237,6 +253,20 @@ public enum SharpnessScoring {
             return min(60, max(12, midpoint.rounded()))
         }
         return 50
+    }
+
+    /// Keeps the auto threshold from flagging more than `maxBlurFraction` of
+    /// the batch. This is useful for large, varied sets where a fixed 50-point
+    /// cutoff would incorrectly mark a majority of distant/small subjects.
+    public static func cappedAutoThreshold(
+        base: Double,
+        scores: [Double],
+        maxBlurFraction: Double
+    ) -> Double {
+        guard !scores.isEmpty else { return base }
+        let fraction = min(0.8, max(0.05, maxBlurFraction))
+        let cap = percentile(scores, fraction)
+        return min(base, cap)
     }
 
     public static func percentile(_ values: [Double], _ fraction: Double) -> Double {

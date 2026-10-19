@@ -8,3 +8,7 @@ dist/*.app/
 
 # Separate local project, not part of FocusCull
 QuJing/
+
+# Separate local projects, not part of FocusCull
+SkinFusion*/
+SkinFusion-*.zip

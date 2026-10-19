@@ -6,6 +6,7 @@ public struct MetalFocusResult: Sendable {
     public let isotropicScore: Double
     public let directionalScore: Double
     public let focusRect: FocusRect?
+    let blocks: [FocusBlock]
 }
 
 /// GPU implementation of the local Laplacian focus metric.
@@ -58,7 +59,9 @@ public final class MetalFocusScorer: @unchecked Sendable {
         height: Int,
         blockSize: Int,
         blockStride: Int,
-        topFraction: Double
+        topFraction: Double,
+        directionalWeight: Double = 0.45,
+        edgeTrim: Double = 0
     ) -> MetalFocusResult? {
         guard width > 2, height > 2, gray.count == width * height else { return nil }
         let grid = Self.blockGrid(
@@ -153,9 +156,19 @@ public final class MetalFocusScorer: @unchecked Sendable {
             }
         }
 
-        let scores = FocusBlockScoring.scores(blocks: blocks, topFraction: topFraction)
+        let usable = FocusBlockScoring.usableBlocks(
+            blocks,
+            imageWidth: width,
+            imageHeight: height,
+            edgeTrim: edgeTrim
+        )
+        let scores = FocusBlockScoring.scores(
+            blocks: usable,
+            topFraction: topFraction,
+            directionalWeight: directionalWeight
+        )
         let focusRect = FocusBlockScoring.focusRect(
-            blocks: blocks,
+            blocks: usable,
             imageWidth: width,
             imageHeight: height
         )
@@ -164,7 +177,8 @@ public final class MetalFocusScorer: @unchecked Sendable {
             score: scores.combined,
             isotropicScore: scores.isotropic,
             directionalScore: scores.directional,
-            focusRect: focusRect
+            focusRect: focusRect,
+            blocks: usable
         )
     }
 

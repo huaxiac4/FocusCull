@@ -269,7 +269,9 @@ private struct PhotoCard: View {
                     HStack(alignment: .top) {
                         selectionIndicator
                         Spacer()
-                        scoreBadge
+                        if settings.showScore {
+                            scoreBadge
+                        }
                     }
                     Spacer()
                     if isHovering, !photo.isFailed {
@@ -312,17 +314,21 @@ private struct PhotoCard: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    HStack(spacing: 4) {
-                        Text(AppModel.formattedDimensions(photo.analysis.pixelWidth, photo.analysis.pixelHeight))
-                        Text("·")
-                        Text(AppModel.formattedFileSize(photo.analysis.fileSize))
+                    if settings.showFileDetails {
+                        HStack(spacing: 4) {
+                            Text(AppModel.formattedDimensions(photo.analysis.pixelWidth, photo.analysis.pixelHeight))
+                            Text("·")
+                            Text(AppModel.formattedFileSize(photo.analysis.fileSize))
+                        }
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                     }
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if let subject = photo.analysis.subject, subject.subject != .unknown {
+                if settings.showSubject,
+                   let subject = photo.analysis.subject,
+                   subject.subject != .unknown {
                     Image(systemName: subject.subject.symbolName)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(.secondary)

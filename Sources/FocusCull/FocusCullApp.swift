@@ -38,7 +38,7 @@ struct FocusCullApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(settings: settings, history: history)
+            SettingsView(settings: settings, history: history, model: model)
                 .modifier(AppAppearanceModifier(appearance: settings.appearance))
         }
     }
@@ -61,6 +61,11 @@ struct FocusCullCommands: Commands {
             .disabled(model.folderURL == nil || model.phase.isScanning)
 
             Divider()
+
+            Button("导出分析报告…") {
+                model.exportAnalysisReport()
+            }
+            .disabled(model.photos.isEmpty)
 
             Button("在 Finder 中显示文件夹") {
                 model.revealFolderInFinder()

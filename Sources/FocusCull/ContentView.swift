@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @EnvironmentObject private var settings: AppSettings
     @State private var isDropTargeted = false
+    @State private var didAttemptRestore = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -56,6 +58,15 @@ struct ContentView: View {
         .accentColor(Theme.accent)
         .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
         .animation(.easeInOut(duration: 0.22), value: model.phase)
+        .task {
+            guard !didAttemptRestore else { return }
+            didAttemptRestore = true
+            guard settings.restoreLastFolder,
+                  model.phase == .empty,
+                  model.photos.isEmpty,
+                  let recent = model.recentFolderURL else { return }
+            model.openFolder(recent)
+        }
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

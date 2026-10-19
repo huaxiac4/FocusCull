@@ -3,15 +3,30 @@ import FocusCullCore
 
 let arguments = CommandLine.arguments.dropFirst()
 guard let folderArgument = arguments.first(where: { !$0.hasPrefix("--") }) else {
-    fputs("usage: focuscull-tool <folder> [--recursive] [--json] [--cpu] [--subjects]\n", stderr)
+    fputs("usage: focuscull-tool <folder> [--recursive] [--json] [--cpu] [--subjects] [--subject-weight 0..1] [--top-fraction 0.01..0.08] [--directional 0..1] [--edge-trim 0..0.15]\n", stderr)
     exit(2)
+}
+
+func doubleValue(_ flag: String) -> Double? {
+    guard let index = arguments.firstIndex(of: flag),
+          arguments.index(after: index) < arguments.endIndex else { return nil }
+    return Double(arguments[arguments.index(after: index)])
 }
 
 let recursive = arguments.contains("--recursive")
 let jsonOutput = arguments.contains("--json")
 let useCPU = arguments.contains("--cpu")
-let classifySubjects = arguments.contains("--subjects")
-let options = FocusAnalyzerOptions(useMetal: !useCPU)
+let classifySubjects = arguments.contains("--subjects") || doubleValue("--subject-weight") != nil
+let subjectWeight = min(1, max(0, doubleValue("--subject-weight") ?? 0.65))
+let topFraction = min(0.08, max(0.01, doubleValue("--top-fraction") ?? 0.02))
+let directionalWeight = min(1, max(0, doubleValue("--directional") ?? 0.45))
+let edgeTrim = min(0.15, max(0, doubleValue("--edge-trim") ?? 0))
+let options = FocusAnalyzerOptions(
+    topFraction: topFraction,
+    directionalWeight: directionalWeight,
+    edgeTrim: edgeTrim,
+    useMetal: !useCPU
+)
 let folder = URL(fileURLWithPath: folderArgument, isDirectory: true)
 
 do {
@@ -34,6 +49,18 @@ do {
             result.subject = subject?.prediction
             if let focusRect = subject?.focusRect {
                 result.focusRect = focusRect
+                if subjectWeight > 0,
+                   let region = FocusAnalyzer.regionScore(
+                       blocks: result.focusBlocks,
+                       rect: focusRect,
+                       topFraction: topFraction,
+                       directionalWeight: directionalWeight
+                   ) {
+                    let weight = min(1, max(0, subjectWeight))
+                    result.rawScore = result.rawScore * (1 - weight) + region.combined * weight
+                    result.isotropicScore = result.isotropicScore * (1 - weight) + region.isotropic * weight
+                    result.directionalScore = result.directionalScore * (1 - weight) + region.directional * weight
+                }
             }
         }
         analyses.append(result)

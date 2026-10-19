@@ -28,10 +28,12 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var history: OperationHistory
+    @ObservedObject var model: AppModel
     @State private var tab: SettingsTab = .general
     @State private var showResetAlert = false
     @State private var showClearHistory = false
     @State private var exportStatus: String?
+    @State private var cacheStatus: String?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -89,9 +91,9 @@ struct SettingsView: View {
             .padding(.horizontal, 18)
             .padding(.top, 58)
             .padding(.bottom, 18)
-            .frame(width: 660, height: 540, alignment: .top)
+            .frame(width: 720, height: 680, alignment: .top)
         }
-        .frame(width: 660, height: 540)
+        .frame(width: 720, height: 680)
         .alert("恢复默认设置？", isPresented: $showResetAlert) {
             Button("恢复默认", role: .destructive) {
                 settings.reset()
@@ -121,6 +123,13 @@ struct SettingsView: View {
         .onChange(of: settings.appearance) { _, appearance in
             history.log(.settings, "切换外观", appearance.title)
         }
+        .onChange(of: settings.sensitivity) { _, sensitivity in
+            model.reapplySensitivity()
+            history.log(.settings, "判定灵敏度", sensitivity.title)
+        }
+        .onChange(of: settings.maxBlurFraction) { _, _ in
+            model.reapplyAutoThreshold()
+        }
     }
 
     private var general: some View {
@@ -149,6 +158,14 @@ struct SettingsView: View {
                     title: "移到废纸篓前确认",
                     subtitle: "关闭后，点「移到废纸篓」会立即执行。照片仍可从废纸篓恢复。",
                     isOn: $settings.confirmBeforeTrash
+                )
+
+                Divider().opacity(0.55)
+
+                SettingsToggleRow(
+                    title: "启动时恢复上次文件夹",
+                    subtitle: "下次打开 FocusCull 时自动载入最近一次分析的文件夹。",
+                    isOn: $settings.restoreLastFolder
                 )
             }
         }
@@ -222,6 +239,185 @@ struct SettingsView: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
             }
+
+            SettingsCard(
+                title: "焦点评分",
+                subtitle: "控制「哪里算清晰」以及 AI 主体在评分中的权重。修改评分参数后，请到下方重新分析当前批次。"
+            ) {
+                analysisSliderRow(
+                    title: "主体优先评分",
+                    subtitle: "越高越只看 AI 主体/人脸区域，降低背景锐利造成的误判。",
+                    value: $settings.subjectFocusWeight,
+                    range: 0...1,
+                    step: 0.05,
+                    valueText: "\(Int((settings.subjectFocusWeight * 100).rounded()))%"
+                )
+
+                Divider().opacity(0.55)
+
+                analysisSliderRow(
+                    title: "方向模糊权重",
+                    subtitle: "越高越重视单向运动模糊；追焦/摇拍可适当提高。",
+                    value: $settings.directionalWeight,
+                    range: 0...1,
+                    step: 0.05,
+                    valueText: "\(Int((settings.directionalWeight * 100).rounded()))%"
+                )
+
+                Divider().opacity(0.55)
+
+                analysisSliderRow(
+                    title: "峰值区域比例",
+                    subtitle: "取最清晰的多少局部区域参与评分；小主体可适当降低。",
+                    value: $settings.peakFraction,
+                    range: 0.01...0.08,
+                    step: 0.005,
+                    valueText: String(format: "%.1f%%", settings.peakFraction * 100)
+                )
+
+                Divider().opacity(0.55)
+
+                analysisSliderRow(
+                    title: "忽略边缘",
+                    subtitle: "排除画面四周的比例，减少边框、护栏、水印等干扰。",
+                    value: $settings.edgeTrim,
+                    range: 0...0.15,
+                    step: 0.01,
+                    valueText: "\(Int((settings.edgeTrim * 100).rounded()))%"
+                )
+            }
+
+            SettingsCard(
+                title: "判定灵敏度",
+                subtitle: "在自动阈值基础上整体放宽或收紧。手动拖动阈值后，此选项不会覆盖手动值。"
+            ) {
+                Picker("判定灵敏度", selection: $settings.sensitivity) {
+                    ForEach(CullingSensitivity.allCases) { sensitivity in
+                        Text(sensitivity.title).tag(sensitivity)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text(settings.sensitivity.subtitle)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+
+                Divider().opacity(0.55)
+
+                analysisSliderRow(
+                    title: "最多疑似失焦比例",
+                    subtitle: "自动阈值最多把这一比例的照片放进疑似失焦，避免整批被误标。",
+                    value: $settings.maxBlurFraction,
+                    range: 0.1...0.7,
+                    step: 0.05,
+                    valueText: "\(Int((settings.maxBlurFraction * 100).rounded()))%"
+                )
+
+                HStack {
+                    Text("当前自动阈值")
+                    Spacer()
+                    Text(model.autoThresholdText)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.accent)
+                    Button("应用到当前批次") {
+                        model.reapplySensitivity()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.phase != .ready)
+                }
+            }
+
+            SettingsCard(
+                title: "性能与数据",
+                subtitle: "并行分析线程、分析报告和缓存管理。"
+            ) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("并行分析线程")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Text("更多线程更快，但会占用更多 CPU / 内存。")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Stepper(
+                        "\(settings.analysisConcurrency)",
+                        value: $settings.analysisConcurrency,
+                        in: 2...8
+                    )
+                    .font(.system(size: 10.5))
+                }
+
+                Divider().opacity(0.55)
+
+                HStack(spacing: 8) {
+                    Button("导出分析报告 CSV…") {
+                        model.exportAnalysisReport()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.photos.isEmpty)
+
+                    Button("重新分析当前批次") {
+                        model.rescan()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.folderURL == nil || model.phase.isScanning)
+                }
+
+                HStack(spacing: 8) {
+                    Button("清除缩略图缓存") {
+                        ThumbnailStore.shared.clear()
+                        cacheStatus = "缩略图缓存已清除"
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("恢复默认分析参数") {
+                        settings.resetAnalysisOptions()
+                        cacheStatus = "分析参数已恢复默认"
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if let cacheStatus {
+                    Text(cacheStatus)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+        }
+    }
+
+    private func analysisSliderRow(
+        title: String,
+        subtitle: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        valueText: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.system(size: 11.5, weight: .medium))
+                Spacer()
+                Text(valueText)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+            }
+            Text(subtitle)
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Slider(value: value, in: range, step: step)
+                .tint(Theme.accent)
         }
     }
 
@@ -301,6 +497,33 @@ struct SettingsView: View {
                     title: "默认显示合焦框",
                     subtitle: "在大图中勾选「合焦框」后，会在检测到的最清晰区域绘制标记。",
                     isOn: $settings.showFocusBox
+                )
+            }
+
+            SettingsCard(
+                title: "卡片信息",
+                subtitle: "控制相册页每张照片显示哪些辅助信息。"
+            ) {
+                SettingsToggleRow(
+                    title: "显示清晰度评分",
+                    subtitle: "卡片右上角的 0–100 分。",
+                    isOn: $settings.showScore
+                )
+
+                Divider().opacity(0.55)
+
+                SettingsToggleRow(
+                    title: "显示 AI 主体图标",
+                    subtitle: "飞机、鸟类、人物、汽车等分类图标。",
+                    isOn: $settings.showSubject
+                )
+
+                Divider().opacity(0.55)
+
+                SettingsToggleRow(
+                    title: "显示尺寸与文件大小",
+                    subtitle: "卡片底部的像素尺寸和文件大小。",
+                    isOn: $settings.showFileDetails
                 )
             }
         }
@@ -524,7 +747,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("FocusCull")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
-                        Text("合焦筛选 · 版本 1.4.1")
+                        Text("合焦筛选 · 版本 1.5.0")
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                         Text("开发者：Lee · 开发工具：DeepSeek")

@@ -108,6 +108,10 @@ public enum SubjectClassifier {
         try? handler.perform([objectRequest])
         let objects = (objectRequest.results?.first as? VNSaliencyImageObservation)?.salientObjects ?? []
 
+        let attentionRequest = VNGenerateAttentionBasedSaliencyImageRequest()
+        try? handler.perform([attentionRequest])
+        let attention = (attentionRequest.results?.first as? VNSaliencyImageObservation)?.salientObjects ?? []
+
         if !faces.isEmpty || !humans.isEmpty,
            prediction.subject == .unknown || prediction.subject == .other {
             let confidence = max(
@@ -127,6 +131,7 @@ public enum SubjectClassifier {
             humans: humans,
             animals: animals,
             objects: objects,
+            attention: attention,
             existingFocusRect: existingFocusRect
         )
         return SubjectAnalysis(prediction: prediction, focusRect: focus)
@@ -245,6 +250,7 @@ public enum SubjectClassifier {
         humans: [VNHumanObservation],
         animals: [VNRecognizedObjectObservation],
         objects: [VNRectangleObservation],
+        attention: [VNRectangleObservation],
         existingFocusRect: FocusRect?
     ) -> FocusRect? {
         // A detected face is the strongest focus target for portraits. For a
@@ -279,10 +285,21 @@ public enum SubjectClassifier {
             }
         }
 
+        // For images the classifier can only label as "other" (distant or
+        // unusual subjects), use Vision's attention region. This is often the
+        // only signal that finds a small aircraft against the sky.
+        if (category == .other || existingFocusRect == nil),
+           let attentionBox = attention.max(by: {
+               $0.boundingBox.width * $0.boundingBox.height
+                   < $1.boundingBox.width * $1.boundingBox.height
+           }) {
+            return expanded(visionRect(attentionBox.boundingBox), horizontal: 0.05, vertical: 0.05)
+        }
+
         // The Metal focus-region pass is already a good general-purpose box
         // for aircraft, birds, cars and other subjects. Keep it unless Vision
-        // found a face/person/animal box above. Objectness is only a fallback
-        // when no focus region was available.
+        // found a face/person/animal/attention box above. Objectness is only a
+        // fallback when no focus region was available.
         if let existingFocusRect {
             return existingFocusRect
         }

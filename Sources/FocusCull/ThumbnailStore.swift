@@ -19,6 +19,10 @@ final class ThumbnailStore {
 
     private init() {}
 
+    func clear() {
+        cache.removeAllObjects()
+    }
+
     func image(for url: URL, maxPixel: Int, preferEmbedded: Bool = true) async -> NSImage? {
         let key = "\(url.path)|\(maxPixel)|\(preferEmbedded)" as NSString
         if let cached = cache.object(forKey: key) {
